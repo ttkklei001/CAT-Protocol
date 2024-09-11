@@ -1,64 +1,71 @@
 #!/bin/bash
 
-CAT_TOKEN_BOX_DIR="$HOME/cat-token-box"
+# 定义颜色代码以格式化输出
+Crontab_file="/usr/bin/crontab"
 
-# 整合安装和配置 CAT Tracker 的步骤
-install_and_setup_cat_tracker() {
-    echo "1. 环境准备..."
-    sudo apt-get update && sudo apt-get upgrade -y && \
-    sudo apt-get install -y build-essential libssl-dev curl git
+# 检查脚本是否以root用户身份运行
+check_root() {
+    [[ $EUID != 0 ]] && echo "当前非ROOT账号(或没有ROOT权限)，无法继续操作，请更换ROOT账号或使用 'sudo su' 命令获取临时ROOT权限（执行后可能会提示输入当前账号的密码）。" && exit 1
+}
 
-    echo "2. 安装 nvm 和 Node.js 22..."
-    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
-    export NVM_DIR="$([ -z "${XDG_CONFIG_HOME-}" ] && printf %s "${HOME}/.nvm" || printf %s "${XDG_CONFIG_HOME}/nvm")"
-    [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-    nvm install 22 && nvm use 22
-    echo "Node.js 版本: $(node -v)"
+# 检查并安装必要的命令
+check_and_install() {
+    local cmd=$1
+    local pkg=$2
+    if ! command -v "$cmd" &> /dev/null; then
+        echo "未检测到 ${cmd}，正在安装..."
+        apt install "$pkg" -y
+    fi
+}
 
-    echo "3. 安装 Docker 和 Docker Compose..."
-    sudo apt-get update && \
-    sudo apt-get install docker.io -y
+# 安装环境和设置完整节点
+install_env_and_full_node() {
+    check_root
 
-    VERSION=$(curl --silent https://api.github.com/repos/docker/compose/releases/latest | grep -Po '"tag_name": "\K.*\d')
-    DESTINATION=/usr/local/bin/docker-compose
-    sudo curl -L https://github.com/docker/compose/releases/download/${VERSION}/docker-compose-$(uname -s)-$(uname -m) -o $DESTINATION
-    sudo chmod 755 $DESTINATION
+    # 更新系统并安装依赖
+    apt update && apt upgrade -y
+    check_and_install "curl" "curl"
+    check_and_install "tar" "tar"
+    check_and_install "wget" "wget"
+    check_and_install "clang" "clang"
+    check_and_install "pkg-config" "pkg-config"
+    check_and_install "libssl-dev" "libssl-dev"
+    check_and_install "jq" "jq"
+    check_and_install "build-essential" "build-essential"
+    check_and_install "git" "git"
+    check_and_install "make" "make"
+    check_and_install "ncdu" "ncdu"
+    check_and_install "unzip" "unzip"
+    check_and_install "zip" "zip"
+    check_and_install "docker.io" "docker.io"
+    check_and_install "npm" "npm"
 
-    sudo systemctl start docker && \
-    sudo systemctl enable docker
+    # 安装 Docker Compose
+    if ! command -v docker-compose &> /dev/null; then
+        VERSION=$(curl --silent https://api.github.com/repos/docker/compose/releases/latest | grep -Po '"tag_name": "\K.*\d')
+        DESTINATION=/usr/local/bin/docker-compose
+        curl -L https://github.com/docker/compose/releases/download/${VERSION}/docker-compose-$(uname -s)-$(uname -m) -o $DESTINATION
+        chmod 755 $DESTINATION
+    fi
 
-    echo "4. 设置 CAT Tracker..."
-    git clone https://github.com/CATProtocol/cat-token-box.git "$CAT_TOKEN_BOX_DIR" && \
-    cd "$CAT_TOKEN_BOX_DIR"
+    # 安装 Node.js 和 Yarn
+    npm install n -g
+    n stable
+    npm i -g yarn
 
+    # 克隆代码库并构建项目
+    git clone https://github.com/CATProtocol/cat-token-box
+    cd cat-token-box
     yarn install
+    yarn build
 
-    cat <<EOF > packages/tracker/.env
-DATABASE_TYPE=postgres
-DATABASE_HOST=127.0.0.1
-DATABASE_PORT=5432
-DATABASE_DB=postgres
-DATABASE_USERNAME=postgres
-DATABASE_PASSWORD=postgres
+    # 设置权限并启动 Docker 容器
+    cd ./packages/tracker/
+    chmod 777 docker/data
+    chmod 777 docker/pgdata
+    docker-compose up -d
 
-RPC_HOST=127.0.0.1
-RPC_PORT=8332
-RPC_USER=bitcoin
-RPC_PASSWORD=opcatAwesome
-
-NETWORK=mainnet
-API_PORT=3000
-GENESIS_BLOCK_HEIGHT=0
-EOF
-
-    sudo chmod 777 docker/data && \
-    sudo chmod 777 docker/pgdata && \
-    docker compose up -d
-
-    echo "5. 安装 sCrypt 编译器..."
-    yarn add scryptlib
-
-    echo "6. 启动 CAT Tracker..."
+    cd ../../
     docker build -t tracker:latest .
     docker run -d \
         --name tracker \
@@ -68,88 +75,92 @@ EOF
         -p 3000:3000 \
         tracker:latest
 
-    echo "查看 CAT Tracker 日志..."
-    docker logs -f tracker
+    # 创建配置文件
+    echo '{
+      "network": "fractal-mainnet",
+      "tracker": "http://127.0.0.1:3000",
+      "dataDir": ".",
+      "maxFeeRate": 30,
+      "rpc": {
+          "url": "http://127.0.0.1:8332",
+          "username": "bitcoin",
+          "password": "opcatAwesome"
+      }
+    }' > ~/cat-token-box/packages/cli/config.json
+
+    # 创建铸造脚本
+    echo '#!/bin/bash
+    command="yarn cli mint -i 45ee725c2c5993b3e4d308842d87e973bf1951f5f7a804b21e4dd964ecd12d6b_0 5"
+
+    while true; do
+        $command
+
+        if [ $? -ne 0 ]; then
+            echo "命令执行失败，退出循环"
+            exit 1
+        fi
+
+        sleep 1
+    done' > ~/cat-token-box/packages/cli/mint_script.sh
+    chmod +x ~/cat-token-box/packages/cli/mint_script.sh
 }
 
 # 创建钱包
 create_wallet() {
-    echo "创建钱包..."
-    cd "$CAT_TOKEN_BOX_DIR"
+    echo -e "\n"
+    cd ~/cat-token-box/packages/cli
     yarn cli wallet create
+    echo -e "\n"
+    yarn cli wallet address
+    echo -e "请保存上面创建好的钱包地址、助记词"
+}
+
+# 开始铸造
+start_mint_cat() {
+    cd ~/cat-token-box/packages/cli
+    bash ~/cat-token-box/packages/cli/mint_script.sh
+}
+
+# 查看全节点日志
+check_node_log() {
+    docker logs -f --tail 100 tracker
 }
 
 # 查看钱包余额
-check_balance() {
-    echo "查看钱包余额..."
-    cd "$CAT_TOKEN_BOX_DIR"
+check_wallet_balance() {
+    cd ~/cat-token-box/packages/cli
     yarn cli wallet balances
 }
 
-# 铸造 CAT Token
-mint_cat_token() {
-    read -p "请输入要铸造的 CAT Token ID: " TOKEN_ID
-    read -p "请输入铸造的 Token 数量: " TOKEN_AMOUNT
-    echo "铸造 CAT Token..."
-    cd "$CAT_TOKEN_BOX_DIR"
-    yarn cli mint -i "$TOKEN_ID" "$TOKEN_AMOUNT"
-}
+# 显示菜单选项
+echo -e "\nCAT Protocol 管理工具"
+echo -e "==============================="
+echo -e "1. 初始化环境和节点配置"
+echo -e "2. 生成新的钱包地址"
+echo -e "3. 启动铸造操作"
+echo -e "4. 实时查看节点日志"
+echo -e "5. 查询钱包余额"
+echo -e "==============================="
 
-# 重复铸造 CAT Token
-repeat_mint_cat_token() {
-    echo "在 cli 目录中创建 script.sh 脚本..."
-    cd "$CAT_TOKEN_BOX_DIR"
-    
-    cat <<EOF > script.sh
-#!/bin/bash
-
-command="sudo yarn cli mint -i 45ee725c2c5993b3e4d308842d87e973bf1951f5f7a804b21e4dd964ecd12d6b_0 5"
-
-while true; do
-    \$command
-
-    if [ \$? -ne 0 ]; then
-        echo "命令执行失败，退出循环"
-        exit 1
-    fi
-
-    sleep 1
-done
-EOF
-
-    chmod +x script.sh
-    echo "重复铸造 CAT Token..."
-    ./script.sh
-}
-
-# 显示菜单
-show_menu() {
-    echo "请选择一个选项:"
-    echo "1) 安装和配置 CAT Tracker"
-    echo "2) 创建钱包"
-    echo "3) 查看钱包余额"
-    echo "4) 铸造 CAT Token"
-    echo "5) 重复铸造 CAT Token"
-    echo "6) 退出"
-}
-
-# 处理用户输入
-handle_choice() {
-    local choice
-    read -p "请输入选择 [1-6]: " choice
-    case $choice in
-        1) install_and_setup_cat_tracker ;;
-        2) create_wallet ;;
-        3) check_balance ;;
-        4) mint_cat_token ;;
-        5) repeat_mint_cat_token ;;
-        6) exit 0 ;;
-        *) echo "无效的选项" ;;
-    esac
-}
-
-# 主程序循环
-while true; do
-    show_menu
-    handle_choice
-done
+# 读取用户输入并执行相应操作
+read -e -p "请输入选项编号并按回车: " num
+case "$num" in
+1)
+    install_env_and_full_node
+    ;;
+2)
+    create_wallet
+    ;;
+3)
+    start_mint_cat
+    ;;
+4)
+    check_node_log
+    ;;
+5)
+    check_wallet_balance
+    ;;
+*)
+    echo -e "请输入有效的选项编号"
+    ;;
+esac
