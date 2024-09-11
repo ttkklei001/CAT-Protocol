@@ -55,7 +55,10 @@ EOF
     sudo chmod 777 docker/pgdata && \
     docker compose up -d
 
-    echo "5. 启动 CAT Tracker..."
+    echo "5. 安装 sCrypt 编译器..."
+    yarn add scryptlib
+
+    echo "6. 启动 CAT Tracker..."
     docker build -t tracker:latest .
     docker run -d \
         --name tracker \
@@ -119,30 +122,6 @@ EOF
     ./script.sh
 }
 
-# 卸载 CAT Tracker 及其依赖
-uninstall_cat_tracker() {
-    echo "停止并删除 CAT Tracker 容器..."
-    docker stop tracker && docker rm tracker
-
-    echo "删除 Docker Compose 容器和网络..."
-    cd "$CAT_TOKEN_BOX_DIR"
-    docker compose down
-
-    echo "删除 CAT Token Box 项目目录..."
-    rm -rf "$CAT_TOKEN_BOX_DIR"
-
-    echo "卸载 Docker..."
-    sudo apt-get purge -y docker.io && sudo apt-get autoremove -y
-
-    echo "卸载 Docker Compose..."
-    sudo rm /usr/local/bin/docker-compose
-
-    echo "卸载 Node.js 和 nvm..."
-    rm -rf "$NVM_DIR"
-
-    echo "卸载完成。"
-}
-
 # 显示菜单
 show_menu() {
     echo "请选择一个选项:"
@@ -151,22 +130,20 @@ show_menu() {
     echo "3) 查看钱包余额"
     echo "4) 铸造 CAT Token"
     echo "5) 重复铸造 CAT Token"
-    echo "6) 卸载 CAT Tracker"
-    echo "7) 退出"
+    echo "6) 退出"
 }
 
 # 处理用户输入
 handle_choice() {
     local choice
-    read -p "请输入选择 [1-7]: " choice
+    read -p "请输入选择 [1-6]: " choice
     case $choice in
         1) install_and_setup_cat_tracker ;;
         2) create_wallet ;;
         3) check_balance ;;
         4) mint_cat_token ;;
         5) repeat_mint_cat_token ;;
-        6) uninstall_cat_tracker ;;
-        7) exit 0 ;;
+        6) exit 0 ;;
         *) echo "无效的选项" ;;
     esac
 }
