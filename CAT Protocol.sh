@@ -18,6 +18,24 @@ check_and_install() {
     fi
 }
 
+# 确保 scryptc 文件具有执行权限
+check_scryptc_permissions() {
+    local scryptc_path="/root/cat-token-box/node_modules/scryptlib/compiler/scryptc/linux/scryptc"
+    if [[ -f "$scryptc_path" ]]; then
+        chmod +x "$scryptc_path" && echo "已为 scryptc 文件赋予执行权限。"
+    else
+        echo "scryptc 文件不存在，请检查安装过程。"
+        exit 1
+    fi
+}
+
+# 重新安装依赖
+reinstall_dependencies() {
+    cd /root/cat-token-box || exit
+    rm -rf node_modules
+    yarn install
+}
+
 # 安装环境和设置完整节点
 install_env_and_full_node() {
     check_root
@@ -55,9 +73,12 @@ install_env_and_full_node() {
 
     # 克隆代码库并构建项目
     git clone https://github.com/CATProtocol/cat-token-box
-    cd cat-token-box
+    cd cat-token-box || exit
     yarn install
     yarn build
+
+    # 检查 scryptc 文件权限
+    check_scryptc_permissions
 
     # 设置权限并启动 Docker 容器
     cd ./packages/tracker/
@@ -108,7 +129,7 @@ install_env_and_full_node() {
 # 创建钱包
 create_wallet() {
     echo -e "\n"
-    cd ~/cat-token-box/packages/cli
+    cd ~/cat-token-box/packages/cli || exit
     yarn cli wallet create
     echo -e "\n"
     yarn cli wallet address
@@ -117,7 +138,7 @@ create_wallet() {
 
 # 开始铸造
 start_mint_cat() {
-    cd ~/cat-token-box/packages/cli
+    cd ~/cat-token-box/packages/cli || exit
     bash ~/cat-token-box/packages/cli/mint_script.sh
 }
 
@@ -128,7 +149,7 @@ check_node_log() {
 
 # 查看钱包余额
 check_wallet_balance() {
-    cd ~/cat-token-box/packages/cli
+    cd ~/cat-token-box/packages/cli || exit
     yarn cli wallet balances
 }
 
